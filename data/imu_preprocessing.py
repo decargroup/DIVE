@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import scipy.constants
-from pylie.torch import SO3
+from pymlg.torch import SO3
 
 def generate_random_vec(N):
     """

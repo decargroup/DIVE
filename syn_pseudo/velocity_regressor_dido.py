@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 import time
 
-from pylie.torch import SE23, SO3
+from pymlg.torch import SE23, SO3
 
 from modelling.imu import *
 from modelling.quad import VelocityUnitVectorRegressor, VelocityVectorRegressor
@@ -189,24 +189,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--root_dir",
         type=str,
-        default="/home/angad/learned_quad_inertial/learned_quad_inertial_odometry/",
+        default="/home/abajwa/mcgill/learned_quad_inertial/",
     )
     parser.add_argument("--data_dir", type=str, default="data/trajectories/dataset/")
     parser.add_argument(
         "--file_target",
         type=str,
-        default=None,
+        default="v_1.9_a_4_s_1_yaw_0.05_n_3_2021-12-29-22-19-25(0)/",
     )
-    parser.add_argument("--data_list", type=str, default="test.txt")
     parser.add_argument(
-        "--filter_output_name", type=str, default="velocity_regressor_left_final_3.5.txt"
+        "--filter_output_name", type=str, default="validation_test_nov18.txt"
     )
     parser.add_argument("--ground_truth_output_name", type=str, default="data.hdf5")
-    parser.add_argument("--data_list_loc", type=str, default="network/splits/test.txt")
+    parser.add_argument("--data_list_loc", type=str, default=None)
     parser.add_argument(
         "--model_path",
         type=str,
-        default="/home/angad/learned_quad_inertial/learned_quad_inertial_odometry/lightning_logs/validation_checkpoints/final_velReg_augment_3_5_best_val_loss.ckpt",
+        default="/home/abajwa/mcgill/DIVE/lightning_logs/learned_quad_inertial/learned_quad_inertial_odometry/lightning_logs/validation_checkpoints/final_velReg_augment_1_best_val_loss.ckpt",
     ) 
 
     # ------------------ target parameters -----------------
@@ -277,7 +276,7 @@ if __name__ == "__main__":
     parser.add_argument("--perturbation", type=str, default="left")
 
     # ------------------ imu-based parameters -----------------
-    parser.add_argument("--inertial_window_length", type=float, default=3.5, help="desired length of inertial window in seconds")
+    parser.add_argument("--inertial_window_length", type=float, default=1., help="desired length of inertial window in seconds")
     parser.add_argument("--nominal_imu_frequency", type=float, default=400., help="Hz")
     parser.add_argument("--update_frequency", type=float, default=10., help="Hz")
 

@@ -1,7 +1,7 @@
 import torch
 
-from pylie.torch import SO3
-from pylie.torch import utils
+from pymlg.torch import SO3
+from pymlg.torch import utils
 
 def unit_vec_rodrigues(a : torch.Tensor, b : torch.Tensor):
     """

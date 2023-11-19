@@ -14,13 +14,13 @@ from plotting_utils import plotting_helpers
 
 from data_loaders import data_loaders
 
-from pylie.torch import SO3
+from pymlg.torch import SO3
 
 from filtering import filtering_utils
 
 from network.resnet1d.loss import loss_geodesic
 
-from pylie.numpy import SO3 as SO3_np
+from pymlg.numpy import SO3 as SO3_np
 
 import scipy.constants
 

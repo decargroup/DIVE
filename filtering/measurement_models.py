@@ -1,12 +1,12 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
-import pynav
+import navlie
 import scipy.constants
-from pylie.torch import SO3, SE23
-from pylie.numpy import SO3 as SO3_np
-from pylie.numpy import SE23 as SE23_np
-import pynav as nav
+from pymlg.torch import SO3, SE23
+from pymlg.numpy import SO3 as SO3_np
+from pymlg.numpy import SE23 as SE23_np
+import navlie as nav
 import time
 
 from network.resnet1d.model_resnet_tlio import ResNet1D, BasicBlock1D
@@ -711,7 +711,7 @@ class SyntheticVelocityUnitVector:
 
     def measure_np(self, x: np.ndarray) -> np.ndarray:
         """
-        a np clone of the torch measurement function for numeric jacobian testing with pynav
+        a np clone of the torch measurement function for numeric jacobian testing with navlie
         """
 
         x = torch.Tensor(x)
@@ -744,7 +744,7 @@ class SyntheticVelocityUnitVector:
             G_vu[:, :, 3:6] = (C_k.transpose(1, 2) / alpha) - g_vu_02
 
         # for now, just using numeric jacobian
-        # G_k_numeric = pynav.utils.jacobian(self.measure_np, x.detach().numpy())
+        # G_k_numeric = navlie.utils.jacobian(self.measure_np, x.detach().numpy())
 
         # G_k_numeric_batch = torch.Tensor(G_k_numeric).unsqueeze(0)
 
@@ -759,7 +759,7 @@ class SyntheticVelocityUnitVector:
         # T_inv = SE23.inverse(SE23.Exp(x[:, :9, :]))
         # T_inv = T_inv.squeeze(0).detach().numpy()
         # z = - D @ T_inv @ b
-        # jac_true = (np.eye(3)/(np.linalg.norm(z)) - (z @ z.T)/(np.linalg.norm(z)**3)) @ D @ pylie.numpy.SE23.odot(T_inv @ b)
+        # jac_true = (np.eye(3)/(np.linalg.norm(z)) - (z @ z.T)/(np.linalg.norm(z)**3)) @ D @ pymlg.numpy.SE23.odot(T_inv @ b)
 
         # print(torch.norm(torch.Tensor(jac_true) - G_vu[:, :, :9]))
 
@@ -850,7 +850,7 @@ class SyntheticVelocityUnitVectorGravityAligned:
 
     def measure_np(self, x: np.ndarray) -> np.ndarray:
         """
-        a np clone of the torch measurement function for numeric jacobian testing with pynav
+        a np clone of the torch measurement function for numeric jacobian testing with navlie
         """
 
         x = torch.Tensor(x)
@@ -1012,7 +1012,7 @@ class NullQuadrotorMeasurements:
 
     def measure_np(self, x: np.ndarray) -> np.ndarray:
         """
-        a np clone of the torch measurement function for numeric jacobian testing with pynav
+        a np clone of the torch measurement function for numeric jacobian testing with navlie
         """
 
         x = torch.Tensor(x)
@@ -1198,7 +1198,7 @@ class NullQuadrotorMeasurements:
                 G_k = torch.cat((G_k, z_vel_forward_j), dim=1)
 
         # compute numeric jacobian for same measurement instance and print squared diff.
-        # G_k_numeric = pynav.utils.jacobian(self.measure_np, x.detach().numpy())
+        # G_k_numeric = navlie.utils.jacobian(self.measure_np, x.detach().numpy())
 
         # G_k_numeric_batch = torch.Tensor(G_k_numeric).unsqueeze(0)
 

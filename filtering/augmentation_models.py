@@ -1,5 +1,5 @@
 import torch
-from pylie.torch import utils
+from pymlg.torch import utils
 
 from .process_models import CoupledIMUKinematicModel
 

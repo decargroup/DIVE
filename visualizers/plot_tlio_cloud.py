@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 import matplotlib.pyplot as plt
 
-from pylie.torch import SO3
+from pymlg.torch import SO3
 
 from plotting_utils import plotting_helpers
 

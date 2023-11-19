@@ -1,14 +1,13 @@
 import torch
 import scipy.constants
-from pylie.torch import SO3
-from pylie.torch import SE23
-from pylie.torch import utils
+from pymlg.torch import SO3
+from pymlg.torch import SE23
+from pymlg.torch import utils
 
 from .filtering_utils import form_time_machine, form_N_matrix
 
-import pynav
+import navlie
 import numpy as np
-
 
 class CoupledIMUKinematicModel:
     """
@@ -480,9 +479,9 @@ class IMUKinematicModel:
 
         return Q_k
 
-class PynavTorchWrapper():
+class navlieTorchWrapper():
     """
-    a very small wrapper class to generate the corresponding pynav jacobians and test them against the torch implementation
+    a very small wrapper class to generate the corresponding navlie jacobians and test them against the torch implementation
     """
     def __init__(self):
         pass

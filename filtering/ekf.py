@@ -49,7 +49,7 @@ class ExtendedKalmanFilterTorch:
 
         x2_val = (meas_res.transpose(1, 2) @ torch.linalg.inv(S) @ meas_res)
 
-        if (x2_val) < 3.841:
+        if True: #(x2_val) < 3.841:
             p_posterior = (torch.eye(15).unsqueeze(0) - K @ G_k) @ p_prior
             P_ks = .5 * (torch.add(p_posterior, p_posterior.transpose(1, 2)))
 

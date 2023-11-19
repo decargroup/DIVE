@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from os import path as osp
 
-from pylie.torch import SO3, SE23
+from pymlg.torch import SO3, SE23
 
 from scipy.spatial.transform import Rotation as R
 from scipy import interpolate

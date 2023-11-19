@@ -4,7 +4,7 @@ import torch
 import torch
 from torch.utils.data import DataLoader
 
-from pylie.torch import SO3, SE23
+from pymlg.torch import SO3, SE23
 
 from filtering import filtering_utils
 

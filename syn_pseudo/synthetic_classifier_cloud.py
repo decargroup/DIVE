@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 import time
 
-from pylie.torch import SE23, SO3
+from pymlg.torch import SE23, SO3
 
 from modelling.imu import *
 from modelling.quad import SyntheticMotionClassifier

@@ -1,5 +1,5 @@
 import torch
-from pylie.torch import SO3
+from pymlg.torch import SO3
 from filtering.filtering_utils import unit_vec_rodrigues
 
 

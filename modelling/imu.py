@@ -2,13 +2,13 @@
 import torch
 import numpy as np
 import scipy.constants
-from pylie.torch import SO3
-import pylie
+from pymlg.torch import SO3
+import pymlg
 
 from filtering.ekf import ExtendedKalmanFilterTorch
 from filtering.process_models import CoupledIMUKinematicModel
 
-from pylie.torch import SE23, SO3
+from pymlg.torch import SE23, SO3
 
 class IMUProcessModel:
     """

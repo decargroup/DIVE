@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from pylie.torch import SE23, SO3
+from pymlg.torch import SE23, SO3
 # helper to compute batched covariance
 def batch_cov(T):
     B, N, D = T.size()

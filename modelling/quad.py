@@ -2,18 +2,18 @@
 import numpy as np
 import torch
 import scipy.constants
-import pylie
+import pymlg
 from os import path as osp
 import time
 
-from pylie.torch import SO3
-from pylie.torch import SE23
+from pymlg.torch import SO3
+from pymlg.torch import SE23
 from filtering.ekf import ExtendedKalmanFilterTorch
 from filtering.measurement_models import NullQuadrotorMeasurements, SyntheticVelocityUnitVector, VelocityUnitVector, SyntheticVelocityUnitVectorGravityAligned, VelocityVector
 from filtering.process_models import NullOnUpdateCoupledIMU, CoupledIMUKinematicModel
 from filtering import filtering_utils
 
-from pylie.numpy import SE23 as SE23_np
+from pymlg.numpy import SE23 as SE23_np
 
 import random
 

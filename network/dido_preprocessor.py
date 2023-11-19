@@ -11,11 +11,9 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 from os import path as osp
 
-from pylie.torch import SO3
+from pymlg.torch import SO3
 
 from filtering import filtering_utils
-
-import csaps as csaps
 
 
 def augment_data(gyro: torch.Tensor, acc: torch.Tensor, args):

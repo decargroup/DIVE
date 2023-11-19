@@ -3,7 +3,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 
-from pylie.torch import SO3
+from pymlg.torch import SO3
 
 from plotting_utils import plotting_helpers
 import matplotlib.pyplot as plt
