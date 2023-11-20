@@ -10,7 +10,7 @@ from pymlg.torch import SO3
 from pymlg.torch import SE23
 from filtering.ekf import ExtendedKalmanFilterTorch
 from filtering.measurement_models import NullQuadrotorMeasurements, SyntheticVelocityUnitVector, VelocityUnitVector, SyntheticVelocityUnitVectorGravityAligned, VelocityVector
-from filtering.process_models import NullOnUpdateCoupledIMU, CoupledIMUKinematicModel
+from filtering.process_models import NullOnUpdateCoupledIMU, CoupledIMUKinematicModel, PreintegratedProcessModel
 from filtering import filtering_utils
 
 from pymlg.numpy import SE23 as SE23_np
@@ -42,7 +42,7 @@ class VelocityVectorRegressor:
         else:
             g_a = torch.tensor([0, 0, scipy.constants.g])
 
-        self.null_coupled_imu = CoupledIMUKinematicModel(Q_c, args.perturbation, g_a)
+        self.null_coupled_imu = PreintegratedProcessModel(Q_c, args.perturbation, g_a)
         self.null_quad_meas = VelocityVector(args, Q_c, g_a)
 
         # initialize filter
@@ -85,7 +85,6 @@ class VelocityVectorRegressor:
 
         self.P = P_0
 
-        # reset preintegration process model and initialize with current covariance
         self.null_coupled_imu.reset_incremental_jacobians(self.P)
 
         self.initialized = True
@@ -134,7 +133,7 @@ class VelocityVectorRegressor:
 
         u_db = self.de_bias_imu(u.clone().detach())
 
-        self.x[0], self.P = self.filter.predict(self.x[0], self.P, u_db, dt)
+        self.x[0], self.P = self.filter.predict(self.x[0], self.null_coupled_imu.P_i, u_db, dt)
 
         # collect into aggregate x for correction and/or logging
         self.agg_x = torch.cat((SE23.Log(self.x[0]), self.x[1]), dim=1)
@@ -214,12 +213,12 @@ class VelocityVectorRegressor:
                     self.perform_update = False
                     self.did_update = False
             else:
-                x_hat, p_hat, self.did_update = self.filter.correct(self.rmi_logger, self.x, self.null_coupled_imu.P_j, dt)
-
-                self.null_coupled_imu.reset_incremental_jacobians(p_hat)
+                x_hat, p_hat, self.did_update = self.filter.correct(self.rmi_logger, self.x, self.P, dt)
 
                 self.x = x_hat
                 self.P = p_hat
+
+                self.null_coupled_imu.reset_incremental_jacobians(self.P)
 
                 self.agg_x = torch.cat((SE23.Log(self.x[0]), self.x[1]), dim=1)
 
@@ -341,7 +340,6 @@ class VelocityUnitVectorRegressor:
 
         self.x[0], self.P = self.filter.predict(self.x[0], self.P, u_db, dt)
 
-        C, _, _ = SE23.to_components(self.x[0])
         # collect into aggregate x for correction and/or logging
         self.agg_x = torch.cat((SE23.Log(self.x[0]), self.x[1]), dim=1)
 

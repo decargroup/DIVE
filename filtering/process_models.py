@@ -7,9 +7,172 @@ from pymlg.torch import utils
 from .filtering_utils import form_time_machine, form_N_matrix
 
 
-"""
-tommorow: define incremental process model to speed up inference, then write in UZH-FPV dataloaders and run on both DIVE/TLIO and compare position RPEs to confirm dataset usability. make list of additional things required from steven to finish revision (should just be data, blackbird subfolders)
-"""
+class PreintegratedProcessModel:
+    """
+    Preintegrated Kinematics Model with incremental jacobians in SE_2(3)
+    """
+
+    def __init__(self, Q_c : torch.Tensor, perturbation = "right", g_a=torch.tensor([[0], [0], [-scipy.constants.g]])):
+        
+        # continuous-time IMU covariance matrix
+        self.Q_c = Q_c
+
+        # gravity vector (defaults to positive-upwards frame)
+        self.g_a = g_a.reshape(1, 3, 1)
+
+        # perturbation, default right
+        self.perturbation = perturbation
+
+        if (perturbation != "right") and (perturbation != "left"):
+            raise ValueError("perturbation must be either 'right' or 'left'")
+
+        # incremental matricies for preintegrated process model
+        self.U_ij = torch.eye(5, 5).unsqueeze(0)
+        self.G_ij = torch.eye(5, 5).unsqueeze(0)
+        self.B_ij = torch.zeros(9, 6).unsqueeze(0)
+        self.Q_ij = torch.zeros(15, 15).unsqueeze(0)
+        self.P_i = torch.zeros(15, 15).unsqueeze(0)
+        self.P_j = torch.zeros(15, 15).unsqueeze(0)
+
+        # complete state jacobian
+        self.A_ij = torch.zeros(15, 15).unsqueeze(0)
+
+        # complete noise jacobian
+        self.L_ij = torch.zeros(15, 12).unsqueeze(0)
+
+    def evaluate(self, x, u, dt):
+        """
+        Implementation of f(x) for SE_2(3) process model. Propogates state x_{k-1} to x_{k}, and accumulates
+        incremental matricies to allow for computationally efficient jacobian calculation
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            The previous state. Expected to be a tensor with shape [N, 5, 5]
+        u : torch.Tensor
+            The input value. Expected to be a tensor with shape [N, 2, 3]
+        dt : float
+            The time interval :math:`\Delta t` between the two states, as a float
+
+        Returns
+        -------
+        x_{k} : torch.Tensor
+            The current state - a torch.Tensor with identical dimensions to x_{k-1}
+        """
+
+        U = CoupledIMUKinematicModel.generate_u(u, dt)
+
+        G = CoupledIMUKinematicModel.generate_g(u, dt, g_a = self.g_a)
+
+        x = G @ x @ U
+
+        # complete preintegrated process model
+
+        self.U_ij = self.U_ij @ U
+        self.G_ij = G @ self.G_ij
+
+        A = CoupledIMUKinematicModel.ie3_adj(CoupledIMUKinematicModel.ie3_inv(U))
+        L = CoupledIMUKinematicModel.input_jacobian_pose(u, dt)
+
+        self.B_ij = A @ self.B_ij - L
+
+        # equation (59) from Compact IMU Kinematics document
+        A_full = torch.zeros(u.shape[0], 15, 15)
+        A_full[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6) #torch.eye(6, 6).unsqueeze(0)
+        A_full[:, 0:9, 0:9] = A
+        A_full[:, 0:9, 9:15] = -L
+        
+        L_full = torch.zeros(u.shape[0], 15, 12)
+        L_full[:, 0:9, 0:6] = L
+        L_full[:, 9:15, 6:12] = dt * utils.batch_eye(u.shape[0], 6, 6)
+
+        self.Q_ij = A_full @ self.Q_ij @ A_full.transpose(1, 2) + L_full @ (self.Q_c / dt) @ L_full.transpose(1, 2)
+
+        if (self.perturbation == 'right'):
+
+            # complete full state jacobian
+            self.A_ij = torch.zeros(u.shape[0], 15, 15)
+            self.A_ij[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)
+            self.A_ij[:, :9, :9] = CoupledIMUKinematicModel.ie3_adj(CoupledIMUKinematicModel.ie3_inv(self.U_ij))
+            self.A_ij[:, :9, 9:15] = self.B_ij
+
+            # complete full noise jacobian
+            self.L_ij = utils.batch_eye(u.shape[0], 15, 15)
+
+            # self.P_j = self.A_ij @ self.P_i @ self.A_ij.transpose(1, 2) + self.L_ij @ self.Q_ij @ self.L_ij.transpose(1, 2)
+
+        elif (self.perturbation == 'left'):
+            # complete full state jacobian
+            self.A_ij = torch.zeros(u.shape[0], 15, 15)
+            self.A_ij[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)
+            self.A_ij[:, :9, :9] = CoupledIMUKinematicModel.ie3_adj(self.G_ij)
+            self.A_ij[:, :9, 9:15] = SE23.Adjoint(x) @ self.B_ij
+
+            # complete full noise jacobian
+            self.L_ij = utils.batch_eye(u.shape[0], 15, 15)
+            self.L_ij[:, :9, :9] = SE23.Adjoint(x)
+
+            # self.P_j = self.A_ij @ self.P_i @ self.A_ij.transpose(1, 2) + self.L_ij @ self.Q_ij @ self.L_ij.transpose(1, 2)
+
+        return x
+    
+    def reset_incremental_jacobians(self, P):
+        """
+        Resets incremental jacobians for correct usage of preintegration process model
+
+        Parameters
+        ----------
+        P : torch.Tensor
+            The current covariance matrix. Expected to be a tensor with shape [N, 15, 15]
+        """
+
+        self.U_ij = torch.eye(5, 5).unsqueeze(0)
+        self.G_ij = torch.eye(5, 5).unsqueeze(0)
+        self.B_ij = torch.zeros(9, 6).unsqueeze(0)
+        self.Q_ij = torch.zeros(15, 15).unsqueeze(0)
+
+        self.P_i = P
+        self.P_j = P
+
+    def state_jacobian(self, x, u, dt):
+        """
+        Implementation of the process jacobian with respect to the state for the IMU process model in SE_2(3)
+        
+        Parameters
+        ----------
+        x : torch.Tensor
+            The previous state. Expected to be a tensor with shape [N, 5, 5]
+        u : torch.Tensor
+            The input value. Expected to be a tensor with shape [N, 2, 3]
+        dt : float
+            The time interval :math:`\Delta t` between the two states, as a float
+        
+        Returns
+        -------
+        F_{k-1} : torch.Tensor
+            The process jacobian with respect to the state : torch.Tensor with shape (N, 15, 15)
+        """
+        return self.A_ij
+
+    def covariance(self, x, u, dt):
+        """
+        Implementation of the process covariance for the IMU process model in SE_2(3). Includes embedded process jacobians wrt. the state
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            The previous state. Expected to be a tensor with shape [N, 5, 5]
+        u : torch.Tensor
+            The input value. Expected to be a tensor with shape [N, 2, 3]
+        dt : float
+            The time interval :math:`\Delta t` between the two states, as a float
+
+        Returns
+        -------
+        Q_{k-1} : torch.Tensor
+            The process covariance : torch.Tensor with shape (N, 15, 15)
+        """
+        return self.L_ij @ self.Q_ij @ self.L_ij.transpose(1, 2)
 
 class CoupledIMUKinematicModel:
     """
@@ -25,14 +188,6 @@ class CoupledIMUKinematicModel:
 
         # perturbation, default right
         self.perturbation = perturbation
-
-        # incremental matricies for preintegrated process model
-        self.U_ij = torch.eye(5, 5).unsqueeze(0)
-        self.G_ij = torch.eye(5, 5).unsqueeze(0)
-        self.B_ij = torch.zeros(9, 6).unsqueeze(0)
-        self.Q_ij = torch.zeros(15, 15).unsqueeze(0)
-        self.P_i = torch.zeros(15, 15).unsqueeze(0)
-        self.P_j = torch.zeros(15, 15).unsqueeze(0)
 
         if (perturbation != "right") and (perturbation != "left"):
             raise ValueError("perturbation must be either 'right' or 'left'")
@@ -260,73 +415,7 @@ class CoupledIMUKinematicModel:
 
         x = G @ x @ U
 
-        # complete preintegrated process model
-
-        self.U_ij = self.U_ij @ U
-        self.G_ij = G @ self.G_ij
-
-        A = self.ie3_adj(self.ie3_inv(U))
-        L = self.input_jacobian_pose(u, dt)
-
-        self.B_ij = A @ self.B_ij - L
-
-        # equation (59) from Compact IMU Kinematics document
-        A_full = torch.zeros(u.shape[0], 15, 15)
-        A_full[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)#torch.eye(6, 6).unsqueeze(0)
-        A_full[:, 0:9, 0:9] = A
-        A_full[:, 0:9, 9:15] = -L
-        
-        L_full = torch.zeros(u.shape[0], 15, 12)
-        L_full[:, 0:9, 0:6] = L
-        L_full[:, 9:15, 6:12] = dt * utils.batch_eye(u.shape[0], 6, 6)
-
-        self.Q_ij = A_full @ self.Q_ij @ A_full.transpose(1, 2) + L_full @ (self.Q_c / dt) @ L_full.transpose(1, 2)
-
-        if (self.perturbation == 'right'):
-
-            # complete full state jacobian
-            A_ij = torch.zeros(u.shape[0], 15, 15)
-            A_ij[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)
-            A_ij[:, :9, :9] = self.ie3_adj(self.ie3_inv(self.U_ij))
-            A_ij[:, :9, 9:15] = self.B_ij
-
-            # complete full noise jacobian
-            L_ij = utils.batch_eye(u.shape[0], 15, 15)
-
-            self.P_j = A_ij @ self.P_i @ A_ij.transpose(1, 2) + L_ij @ self.Q_ij @ L_ij.transpose(1, 2)
-
-        elif (self.perturbation == 'left'):
-            # complete full state jacobian
-            A_ij = torch.zeros(u.shape[0], 15, 15)
-            A_ij[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)
-            A_ij[:, :9, :9] = self.ie3_adj(self.G_ij)
-            A_ij[:, :9, 9:15] = SE23.Adjoint(x) @ self.B_ij
-
-            # complete full noise jacobian
-            L_ij = utils.batch_eye(u.shape[0], 15, 15)
-            L_ij[:, :9, :9] = SE23.Adjoint(x)
-
-            self.P_j = A_ij @ self.P_i @ A_ij.transpose(1, 2) + L_ij @ self.Q_ij @ L_ij.transpose(1, 2)
-
         return x
-    
-    def reset_incremental_jacobians(self, P):
-        """
-        Resets incremental jacobians for correct usage of preintegration process model
-
-        Parameters
-        ----------
-        P : torch.Tensor
-            The current covariance matrix. Expected to be a tensor with shape [N, 15, 15]
-        """
-
-        self.U_ij = torch.eye(5, 5).unsqueeze(0)
-        self.G_ij = torch.eye(5, 5).unsqueeze(0)
-        self.B_ij = torch.zeros(9, 6).unsqueeze(0)
-        self.Q_ij = torch.zeros(15, 15).unsqueeze(0)
-
-        self.P_i = P
-        self.P_j = P
 
     def state_jacobian(self, x, u, dt):
         """
