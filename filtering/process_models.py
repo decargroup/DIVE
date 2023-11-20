@@ -6,8 +6,10 @@ from pymlg.torch import utils
 
 from .filtering_utils import form_time_machine, form_N_matrix
 
-import navlie
-import numpy as np
+
+"""
+tommorow: define incremental process model to speed up inference, then write in UZH-FPV dataloaders and run on both DIVE/TLIO and compare position RPEs to confirm dataset usability. make list of additional things required from steven to finish revision (should just be data, blackbird subfolders)
+"""
 
 class CoupledIMUKinematicModel:
     """
@@ -23,6 +25,14 @@ class CoupledIMUKinematicModel:
 
         # perturbation, default right
         self.perturbation = perturbation
+
+        # incremental matricies for preintegrated process model
+        self.U_ij = torch.eye(5, 5).unsqueeze(0)
+        self.G_ij = torch.eye(5, 5).unsqueeze(0)
+        self.B_ij = torch.zeros(9, 6).unsqueeze(0)
+        self.Q_ij = torch.zeros(15, 15).unsqueeze(0)
+        self.P_i = torch.zeros(15, 15).unsqueeze(0)
+        self.P_j = torch.zeros(15, 15).unsqueeze(0)
 
         if (perturbation != "right") and (perturbation != "left"):
             raise ValueError("perturbation must be either 'right' or 'left'")
@@ -156,28 +166,32 @@ class CoupledIMUKinematicModel:
         """
 
         omega = u[:, 0, :]
-        acc = u[:, 1, :]
+        acc = u[:, 1, :].reshape(1, 3, 1)
 
-        Om = SO3.wedge(omega)
+        Om = SO3.wedge(omega * dt)
         OmOm = Om @ Om
 
         # TODO: confirm that this isn't elementwise. doesn't look like it, but just to make sure
         W = (
-            OmOm @ SO3.wedge(acc.unsqueeze(2))
-            + Om @ SO3.wedge(Om @ acc.unsqueeze(2))
-            + SO3.wedge(OmOm @ acc.unsqueeze(2))
+            OmOm @ SO3.wedge(acc)
+            + Om @ SO3.wedge(Om @ acc)
+            + SO3.wedge(OmOm @ acc)
         )
 
         batch_dt = dt * utils.batch_eye(u.shape[0], 3, 3)
 
         upsilon_30 = (dt**3) * ((SO3.wedge(acc) / 12) - (dt**2 * W) / 720)
+
+        # navlie definition of upsilon
+        upsilon_30_navlie = (-0.5 * (dt**2 / 2) * ((1 / 360) * (dt**3) * (OmOm @ SO3.wedge(acc) + Om @ (SO3.wedge(Om @ acc)) + SO3.wedge(OmOm @ acc)) - (1 / 6) * dt * SO3.wedge(acc)))
+
         upsilon_31 = (
             ((dt**2) / 2)
             * SO3.left_jacobian_inv(dt * omega)
             @ form_N_matrix(dt * omega)
         )
 
-        c0 = torch.cat((batch_dt, torch.zeros(u.shape[0], 3, 3), upsilon_30), dim=1)
+        c0 = torch.cat((batch_dt, torch.zeros(u.shape[0], 3, 3), upsilon_30_navlie), dim=1)
         c1 = torch.cat((torch.zeros(u.shape[0], 3, 3), batch_dt, upsilon_31), dim=1)
 
         return torch.cat((c0, c1), dim=2)
@@ -222,7 +236,8 @@ class CoupledIMUKinematicModel:
 
     def evaluate(self, x, u, dt):
         """
-        Implementation of f(x) for SE_2(3) process model. Propogates state x_{k-1} to x_{k} and returns it
+        Implementation of f(x) for SE_2(3) process model. Propogates state x_{k-1} to x_{k}, and accumulates
+        incremental matricies to allow for computationally efficient jacobian calculation
 
         Parameters
         ----------
@@ -243,7 +258,75 @@ class CoupledIMUKinematicModel:
 
         G = self.generate_g(u, dt, g_a = self.g_a)
 
-        return G @ x @ U
+        x = G @ x @ U
+
+        # complete preintegrated process model
+
+        self.U_ij = self.U_ij @ U
+        self.G_ij = G @ self.G_ij
+
+        A = self.ie3_adj(self.ie3_inv(U))
+        L = self.input_jacobian_pose(u, dt)
+
+        self.B_ij = A @ self.B_ij - L
+
+        # equation (59) from Compact IMU Kinematics document
+        A_full = torch.zeros(u.shape[0], 15, 15)
+        A_full[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)#torch.eye(6, 6).unsqueeze(0)
+        A_full[:, 0:9, 0:9] = A
+        A_full[:, 0:9, 9:15] = -L
+        
+        L_full = torch.zeros(u.shape[0], 15, 12)
+        L_full[:, 0:9, 0:6] = L
+        L_full[:, 9:15, 6:12] = dt * utils.batch_eye(u.shape[0], 6, 6)
+
+        self.Q_ij = A_full @ self.Q_ij @ A_full.transpose(1, 2) + L_full @ (self.Q_c / dt) @ L_full.transpose(1, 2)
+
+        if (self.perturbation == 'right'):
+
+            # complete full state jacobian
+            A_ij = torch.zeros(u.shape[0], 15, 15)
+            A_ij[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)
+            A_ij[:, :9, :9] = self.ie3_adj(self.ie3_inv(self.U_ij))
+            A_ij[:, :9, 9:15] = self.B_ij
+
+            # complete full noise jacobian
+            L_ij = utils.batch_eye(u.shape[0], 15, 15)
+
+            self.P_j = A_ij @ self.P_i @ A_ij.transpose(1, 2) + L_ij @ self.Q_ij @ L_ij.transpose(1, 2)
+
+        elif (self.perturbation == 'left'):
+            # complete full state jacobian
+            A_ij = torch.zeros(u.shape[0], 15, 15)
+            A_ij[:, 9:15, 9:15] = utils.batch_eye(u.shape[0], 6, 6)
+            A_ij[:, :9, :9] = self.ie3_adj(self.G_ij)
+            A_ij[:, :9, 9:15] = SE23.Adjoint(x) @ self.B_ij
+
+            # complete full noise jacobian
+            L_ij = utils.batch_eye(u.shape[0], 15, 15)
+            L_ij[:, :9, :9] = SE23.Adjoint(x)
+
+            self.P_j = A_ij @ self.P_i @ A_ij.transpose(1, 2) + L_ij @ self.Q_ij @ L_ij.transpose(1, 2)
+
+        return x
+    
+    def reset_incremental_jacobians(self, P):
+        """
+        Resets incremental jacobians for correct usage of preintegration process model
+
+        Parameters
+        ----------
+        P : torch.Tensor
+            The current covariance matrix. Expected to be a tensor with shape [N, 15, 15]
+        """
+
+        self.U_ij = torch.eye(5, 5).unsqueeze(0)
+        self.G_ij = torch.eye(5, 5).unsqueeze(0)
+        self.B_ij = torch.zeros(9, 6).unsqueeze(0)
+        self.Q_ij = torch.zeros(15, 15).unsqueeze(0)
+
+        self.P_i = P
+        self.P_j = P
 
     def state_jacobian(self, x, u, dt):
         """
@@ -285,7 +368,8 @@ class CoupledIMUKinematicModel:
 
         return torch.cat((r0, r1), dim=1)
 
-    def input_jacobian_pose(self, u, dt):
+    @staticmethod
+    def input_jacobian_pose(u, dt):
         """
         Implementation of the process jacobian with respect to the input for the IMU process model (excluding bias) in SE_2(3)
 
@@ -303,7 +387,7 @@ class CoupledIMUKinematicModel:
         L_{k-1} : torch.Tensor
             The process jacobian (excluding bias) with respect to the input : torch.Tensor with shape (N, 6, 6)
         """
-        L = SE23.left_jacobian(-self.generate_nu(u, dt)) @ self.generate_upsilon(u, dt)
+        L = SE23.left_jacobian(-CoupledIMUKinematicModel.generate_nu(u, dt)) @ CoupledIMUKinematicModel.generate_upsilon(u, dt)
 
         return L
 
@@ -478,13 +562,6 @@ class IMUKinematicModel:
         Q_k = B_k @ q_n @ B_k.transpose(1, 2)
 
         return Q_k
-
-class navlieTorchWrapper():
-    """
-    a very small wrapper class to generate the corresponding navlie jacobians and test them against the torch implementation
-    """
-    def __init__(self):
-        pass
 
 class NullOnUpdateCoupledIMU(CoupledIMUKinematicModel):
     def __init__(self, Q_c, perturbation = "right", g_a=torch.tensor([[0], [0], [-scipy.constants.g]])):

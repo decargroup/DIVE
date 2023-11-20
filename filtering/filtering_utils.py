@@ -89,21 +89,19 @@ def form_N_matrix(phi):
 
     if torch.linalg.norm(phi) < SO3._small_angle_tol:
         return torch.eye(3, 3).unsqueeze(0)
-
-    # axis representation
-    axis = (phi / torch.linalg.norm(phi, dim=1).unsqueeze(1)).reshape(-1, 3, 1)
-
+    
     # norm representation
     phi_scalar = torch.linalg.norm(phi, dim=1).unsqueeze(1)
 
+    # axis representation
+    a = (phi / phi_scalar).reshape(-1, 3, 1)
+
+    # individual components
+    s = ((phi_scalar - torch.sin(phi_scalar)) / (phi_scalar**2)).unsqueeze(2)
+    c = ((1 - torch.cos(phi_scalar)) / (phi_scalar**2)).unsqueeze(2)
+
     N = (
-        axis @ axis.transpose(1, 2)
-        + 2
-        * (1 / phi_scalar - torch.sin(phi_scalar) / (phi_scalar**2)).unsqueeze(2)
-        * SO3.wedge(axis)
-        + 2
-        * ((torch.cos(phi_scalar) - 1) / (phi_scalar**2)).unsqueeze(2)
-        * (SO3.wedge(axis) @ SO3.wedge(axis))
+        2 * c * utils.batch_eye(phi.shape[0], 3, 3) + (1 - 2 * c) * (a @ a.transpose(1, 2)) + 2 * s * SO3.wedge(a)
     )
 
     return N

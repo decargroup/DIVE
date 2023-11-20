@@ -34,13 +34,15 @@ class VelocityVectorRegressor:
         Q_c[6:9, 6:9] *= sigma_gyro_bias_ct**2
         Q_c[9:12, 9:12] *= sigma_accel_bias_ct**2
 
+        self.Q_c = Q_c
+
         # based on reference frame, make gravity vector +ve up or down
         if args.z_up_frame:
             g_a = torch.tensor([0, 0, -scipy.constants.g])
         else:
             g_a = torch.tensor([0, 0, scipy.constants.g])
 
-        self.null_coupled_imu = NullOnUpdateCoupledIMU(Q_c, args.perturbation, g_a)
+        self.null_coupled_imu = CoupledIMUKinematicModel(Q_c, args.perturbation, g_a)
         self.null_quad_meas = VelocityVector(args, Q_c, g_a)
 
         # initialize filter
@@ -82,6 +84,9 @@ class VelocityVectorRegressor:
         self.agg_x = torch.cat((SE23.Log(self.x[0]), self.x[1]), dim=1)
 
         self.P = P_0
+
+        # reset preintegration process model and initialize with current covariance
+        self.null_coupled_imu.reset_incremental_jacobians(self.P)
 
         self.initialized = True
 
@@ -159,6 +164,8 @@ class VelocityVectorRegressor:
 
                     self.P = P_0.unsqueeze(0)
 
+                    self.null_coupled_imu.reset_incremental_jacobians(self.P)
+
                     # pull out ground-truth values from gt_k
                     gt_phi = gt_k[:, 0]
                     gt_v = gt_k[:, 1]
@@ -189,6 +196,8 @@ class VelocityVectorRegressor:
 
                     self.P = P_0.unsqueeze(0)
 
+                    self.null_coupled_imu.reset_incremental_jacobians(self.P)
+
                     # pull out ground-truth values from gt_k
                     gt_phi = gt_k[:, 0]
                     gt_v = gt_k[:, 1]
@@ -205,7 +214,9 @@ class VelocityVectorRegressor:
                     self.perform_update = False
                     self.did_update = False
             else:
-                x_hat, p_hat, self.did_update = self.filter.correct(self.rmi_logger, self.x, self.P, dt)
+                x_hat, p_hat, self.did_update = self.filter.correct(self.rmi_logger, self.x, self.null_coupled_imu.P_j, dt)
+
+                self.null_coupled_imu.reset_incremental_jacobians(p_hat)
 
                 self.x = x_hat
                 self.P = p_hat
